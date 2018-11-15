@@ -1,5 +1,5 @@
 import numpy as np
-from baselines.a2c.utils import discount_with_dones
+from baselines.aux.utils import discount_with_dones
 from baselines.common.runners import AbstractEnvRunner
 
 class Runner(AbstractEnvRunner):
@@ -13,11 +13,9 @@ class Runner(AbstractEnvRunner):
     def run(self):
         mb_obs, mb_rewards, mb_actions, mb_values, mb_dones = [],[],[],[],[]
         mb_states = self.states
-        #begin running
-        #we run for nsteps
         for n in range(self.nsteps):
             #(action, value estimate, next state, negative log likelihood of the action under current policy parameters) tuple
-            actions, values, states, _ = self.model.step(self.obs, S=self.states, M=self.dones)
+            actions, values, states, _ = self.models.step(self.obs, S=self.states, M=self.dones)
             #not really sure what M and S does here...
 
             #actions, values, and states are all obtained by running session of the tf graph.

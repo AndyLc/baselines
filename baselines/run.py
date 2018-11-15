@@ -59,7 +59,9 @@ def train(args, extra_args):
     seed = args.seed
 
     learn = get_learn_function(args.alg)
+    #print("learn: ", learn)
     alg_kwargs = get_learn_function_defaults(args.alg, env_type)
+    #print("alg_kwards: ", alg_kwargs)
     alg_kwargs.update(extra_args)
 
     env = build_env(args)
@@ -222,7 +224,7 @@ def main():
         env = build_env(args)
         obs = env.reset()
         def initialize_placeholders(nlstm=128,**kwargs):
-            return np.zeros((args.num_env, 2*nlstm)), np.zeros((1))
+            return np.zeros((args.num_env or 2, 2*nlstm)), np.zeros((1))
         state, dones = initialize_placeholders(**extra_args)
         while True:
             actions, _, state, _ = model.step(obs,S=state, M=dones)

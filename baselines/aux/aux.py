@@ -6,11 +6,11 @@ from baselines import logger
 
 from baselines.common import set_global_seeds, explained_variance
 from baselines.common import tf_util
-from baselines.common.policies import build_policy
+from baselines.aux.policies import build_policy
 
 
-from baselines.a2c.utils import Scheduler, find_trainable_variables
-from baselines.a2c.runner import Runner
+from baselines.aux.utils import Scheduler, find_trainable_variables
+from baselines.aux.runner import Runner
 
 from tensorflow import losses
 
@@ -24,7 +24,7 @@ class Model(object):
         nenvs = env.num_envs
         nbatch = nenvs*nsteps
 
-        with tf.variable_scope('a2c_model', reuse=tf.AUTO_REUSE):
+        with tf.variable_scope('aux_model', reuse=tf.AUTO_REUSE):
             step_model = policy(nenvs, 1, sess)
             train_model = policy(nbatch, nsteps, sess)
 
@@ -38,7 +38,7 @@ class Model(object):
 
         pg_loss = tf.reduce_mean(ADV * neglogpac)
         vf_loss = losses.mean_squared_error(tf.squeeze(train_model.vf), R)
-        r0_loss = losses.mean_squared_error(tf.squeeze(train_model.r), R)
+        #r0_loss = losses.mean_squared_error(tf.squeeze(train_model.r), R)
 
         loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef
 
@@ -46,10 +46,10 @@ class Model(object):
             tf.summary.scalar('avg_reward', tf.reduce_mean(R))
             tf.summary.scalar('avg_pg_loss', tf.reduce_mean(pg_loss))
             tf.summary.scalar('avg_vf_loss', tf.reduce_mean(vf_loss))
-            tf.summary.scalar('avg_r0_loss', tf.reduce_mean(r0_loss))
+            #tf.summary.scalar('avg_r0_loss', tf.reduce_mean(r0_loss))
             tf.summary.scalar('avg_loss', tf.reduce_mean(loss))
 
-        params = find_trainable_variables("a2c_model")
+        params = find_trainable_variables("aux_model")
         grads = tf.gradients(loss, params)
         if max_grad_norm is not None:
             grads, grad_norm = tf.clip_by_global_norm(grads, max_grad_norm)
@@ -75,11 +75,11 @@ class Model(object):
                 td_map[train_model.S] = states
                 td_map[train_model.M] = masks
 
-            policy_loss, value_loss, reward_loss, policy_entropy, summary, _ = sess.run(
-                [pg_loss, vf_loss, r0_loss, entropy, merged, _train],
+            policy_loss, value_loss, policy_entropy, summary, _ = sess.run(
+                [pg_loss, vf_loss, entropy, merged, _train],
                 td_map
             )
-            return policy_loss, value_loss, reward_loss, policy_entropy, summary
+            return policy_loss, value_loss, policy_entropy, summary
 
         self.train = train
         self.train_model = train_model
@@ -113,6 +113,7 @@ def learn(
     gamma=0.99,
     log_interval=100,
     load_path=None,
+    heads=6,
     **network_kwargs):
 
     '''
@@ -164,35 +165,47 @@ def learn(
     set_global_seeds(seed)
 
     nenvs = env.num_envs
-    policy = build_policy(env, network, **network_kwargs)
-    model = Model(policy=policy, env=env, nsteps=nsteps, ent_coef=ent_coef, vf_coef=vf_coef, r0_coef=r0_coef,
-        max_grad_norm=max_grad_norm, lr=lr, alpha=alpha, epsilon=epsilon, total_timesteps=total_timesteps, lrschedule=lrschedule)
+    print("network type: ", network)
+    policies = [build_policy(env, network, i, **network_kwargs) for i in range(heads)]
+
+    #TODO: connect the nets from observations to some shared network....
+
+    models = []
+    for i in range(heads):
+        model = Model(policy=policies[i], env=env, nsteps=nsteps, ent_coef=ent_coef, vf_coef=vf_coef, r0_coef=r0_coef,
+            max_grad_norm=max_grad_norm, lr=lr, alpha=alpha, epsilon=epsilon, total_timesteps=total_timesteps, lrschedule=lrschedule)
+        models.append(model)
+
     if load_path is not None:
         model.load(load_path)
 
     #TODO: create multiple environments, each with a different length cartpole.
-    runner = Runner(env, model, nsteps=nsteps, gamma=gamma)
+    runners = []
+    for _ in range(heads):
+        runner = Runner(env, model, nsteps=nsteps, gamma=gamma)
+        runners.append(runner)
 
     nbatch = nenvs*nsteps
     tstart = time.time()
     #print("nbatch: ", nbatch)
     for update in range(1, total_timesteps//nbatch+1):
-        obs, states, rewards, masks, actions, values = runner.run() #We observe these from the environment
-        policy_loss, value_loss, r0_loss, policy_entropy, summary = model.train(obs, states, rewards, masks, actions, values)
+        obs, states, rewards, masks, actions, values = runners[update % heads].run() #We observe these from the environment
+        policy_loss, value_loss, policy_entropy, summary = models[update % heads].train(obs, states, rewards, masks, actions, values)
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
 
-        if update % log_interval == 0:
-            model.train_writer.add_summary(summary, update//log_interval)
+        if update % log_interval >= 0 and update % log_interval < heads:
+            models[update % heads].train_writer.add_summary(summary, update//log_interval)
 
-        if update % log_interval == 0 or update == 1:
+        if (update % log_interval >= 0 and update % log_interval < heads):
             ev = explained_variance(values, rewards)
-            logger.record_tabular("nupdates", update)
-            logger.record_tabular("total_timesteps", update*nbatch)
-            logger.record_tabular("fps", fps)
-            logger.record_tabular("policy_entropy", float(policy_entropy))
-            logger.record_tabular("value_loss", float(value_loss))
-            logger.record_tabular("r0_loss", float(r0_loss))
-            logger.record_tabular("explained_variance", float(ev))
+            logger.record_tabular("nupdates" + str(update % log_interval), update)
+            logger.record_tabular("total_timesteps" + str(update % log_interval), update*nbatch)
+            logger.record_tabular("fps" + str(update % log_interval), fps)
+            logger.record_tabular("policy_entropy" + str(update % log_interval), float(policy_entropy))
+            logger.record_tabular("value_loss" + str(update % log_interval), float(value_loss))
+            logger.record_tabular("r0_loss" + str(update % log_interval), float(r0_loss))
+            logger.record_tabular("explained_variance" + str(update % log_interval), float(ev))
             logger.dump_tabular()
+
     return model

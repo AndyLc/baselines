@@ -1,6 +1,6 @@
 import tensorflow as tf
 from baselines.common import tf_util
-from baselines.a2c.utils import fc
+from baselines.aux.utils import fc
 from baselines.common.distributions import make_pdtype
 from baselines.common.input import observation_placeholder, encode_observation
 from baselines.common.tf_util import adjust_shape
@@ -15,7 +15,7 @@ class PolicyWithValue(object):
     Encapsulates fields and methods for RL policy and value function estimation with shared parameters
     """
 
-    def __init__(self, env, observations, latent, estimate_q=False, vf_latent=None, sess=None, **tensors):
+    def __init__(self, env, observations, latent, head, estimate_q=False, vf_latent=None, sess=None, **tensors):
         """
         Parameters:
         ----------
@@ -45,7 +45,7 @@ class PolicyWithValue(object):
 
         self.pdtype = make_pdtype(env.action_space)
 
-        self.pd, self.pi = self.pdtype.pdfromlatent(latent, init_scale=0.01)
+        self.pd, self.pi = self.pdtype.pdfromlatent(latent, init_scale=0.01, head=head)
 
         self.action = self.pd.sample()
         self.action_v = tf.cast(tf.reshape(self.action, [self.action.shape[0], 1]), tf.float32)
@@ -54,13 +54,10 @@ class PolicyWithValue(object):
 
         if estimate_q:
             assert isinstance(env.action_space, gym.spaces.Discrete)
-            self.q = fc(vf_latent, 'q', env.action_space.n)
+            self.q = fc(vf_latent, 'q' + str(head), env.action_space.n)
             self.vf = self.q
         else:
-            #This is used to update vf at eat time step, taking in vf_latent.
-            #we assume vf can be explained by vf_latent...
-            #what is vf_latent?
-            self.vf = fc(vf_latent, 'vf', 1)
+            self.vf = fc(vf_latent, 'vf' + str(head), 1)
             self.vf = self.vf[:,0]
             #self.r = reward_latent(vf_latent, self.action_v, 'r', 1)
             #self.r = self.r[:,0]
@@ -74,6 +71,7 @@ class PolicyWithValue(object):
                 if isinstance(inpt, tf.Tensor) and inpt._op.type == 'Placeholder':
                     feed_dict[inpt] = adjust_shape(inpt, data)
 
+        #how to make sess.run choose a specific output?
         return sess.run(variables, feed_dict)
 
     def step(self, observation, **extra_feed):
@@ -119,10 +117,11 @@ class PolicyWithValue(object):
     def load(self, load_path):
         tf_util.load_state(load_path, sess=self.sess)
 
-def build_policy(env, policy_network, value_network=None,  normalize_observations=False, estimate_q=False, **policy_kwargs):
+def build_policy(env, policy_network, head, value_network=None,  normalize_observations=False, estimate_q=False, **policy_kwargs):
     if isinstance(policy_network, str):
         network_type = policy_network
         policy_network = get_network_builder(network_type)(**policy_kwargs)
+        feature_network = get_network_builder(network_type)(**policy_kwargs)
 
     def policy_fn(nbatch=None, nsteps=None, sess=None, observ_placeholder=None):
         ob_space = env.observation_space
@@ -139,15 +138,30 @@ def build_policy(env, policy_network, value_network=None,  normalize_observation
 
         encoded_x = encode_observation(ob_space, encoded_x)
 
-        #ACTOR!!!
-        with tf.variable_scope('pi', reuse=tf.AUTO_REUSE):
-            policy_latent, recurrent_tensors = policy_network(encoded_x)
+        with tf.variable_scope('shared', reuse=tf.AUTO_REUSE):
+            features = fc(encoded_x, 'feat', 128)
+            #scope.reuse_variables()
 
+        """
+        with tf.variable_scope('shared', reuse=True):
+            features = fc(encoded_x, 'q'), env.action_space.n)
+            features, recurrent_tensors = feature_network(encoded_x)
             if recurrent_tensors is not None:
                 # recurrent architecture, need a few more steps
                 nenv = nbatch // nsteps
                 assert nenv > 0, 'Bad input for recurrent policy: batch size {} smaller than nsteps {}'.format(nbatch, nsteps)
-                policy_latent, recurrent_tensors = policy_network(encoded_x, nenv)
+                features, recurrent_tensors = feature_network(encoded_x, nenv)
+                extra_tensors.update(recurrent_tensors)
+        """
+
+        #ACTOR!!!
+        with tf.variable_scope('pi' + str(head), reuse=tf.AUTO_REUSE):
+            policy_latent, recurrent_tensors = policy_network(features)
+            if recurrent_tensors is not None:
+                # recurrent architecture, need a few more steps
+                nenv = nbatch // nsteps
+                assert nenv > 0, 'Bad input for recurrent policy: batch size {} smaller than nsteps {}'.format(nbatch, nsteps)
+                policy_latent, recurrent_tensors = policy_network(features, nenv)
                 extra_tensors.update(recurrent_tensors)
 
         #CRITIC!!
@@ -161,14 +175,15 @@ def build_policy(env, policy_network, value_network=None,  normalize_observation
             else:
                 assert callable(_v_net)
 
-            with tf.variable_scope('vf', reuse=tf.AUTO_REUSE):
+            with tf.variable_scope('vf' + str(head), reuse=tf.AUTO_REUSE):
                 vf_latent, _ = _v_net(encoded_x)
 
         policy = PolicyWithValue(
             env=env,
             observations=X,
             latent=policy_latent,
-            vf_latent=vf_latent,
+            head=head,
+            vf_latent=vf_latent, #this is the same as policy_latent...
             sess=sess,
             estimate_q=estimate_q,
             **extra_tensors

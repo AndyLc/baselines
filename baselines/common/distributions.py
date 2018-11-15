@@ -58,8 +58,8 @@ class CategoricalPdType(PdType):
         self.ncat = ncat
     def pdclass(self):
         return CategoricalPd
-    def pdfromlatent(self, latent_vector, init_scale=1.0, init_bias=0.0):
-        pdparam = fc(latent_vector, 'pi', self.ncat, init_scale=init_scale, init_bias=init_bias)
+    def pdfromlatent(self, latent_vector, init_scale=1.0, init_bias=0.0, head=""):
+        pdparam = fc(latent_vector, 'pi' + str(head), self.ncat, init_scale=init_scale, init_bias=init_bias)
         return self.pdfromflat(pdparam), pdparam
 
     def param_shape(self):
@@ -90,9 +90,9 @@ class DiagGaussianPdType(PdType):
     def pdclass(self):
         return DiagGaussianPd
 
-    def pdfromlatent(self, latent_vector, init_scale=1.0, init_bias=0.0):
-        mean = fc(latent_vector, 'pi', self.size, init_scale=init_scale, init_bias=init_bias)
-        logstd = tf.get_variable(name='pi/logstd', shape=[1, self.size], initializer=tf.zeros_initializer())
+    def pdfromlatent(self, latent_vector, init_scale=1.0, init_bias=0.0, head=""):
+        mean = fc(latent_vector, 'pi' + str(head), self.size, init_scale=init_scale, init_bias=init_bias)
+        logstd = tf.get_variable(name='pi' + str(head) + '/logstd', shape=[1, self.size], initializer=tf.zeros_initializer())
         pdparam = tf.concat([mean, mean * 0.0 + logstd], axis=1)
         return self.pdfromflat(pdparam), mean
 
@@ -114,8 +114,8 @@ class BernoulliPdType(PdType):
         return [self.size]
     def sample_dtype(self):
         return tf.int32
-    def pdfromlatent(self, latent_vector, init_scale=1.0, init_bias=0.0):
-        pdparam = fc(latent_vector, 'pi', self.size, init_scale=init_scale, init_bias=init_bias)
+    def pdfromlatent(self, latent_vector, init_scale=1.0, init_bias=0.0, head=""):
+        pdparam = fc(latent_vector, 'pi' + str(head), self.size, init_scale=init_scale, init_bias=init_bias)
         return self.pdfromflat(pdparam), pdparam
 
 # WRONG SECOND DERIVATIVES
@@ -336,4 +336,3 @@ def validate_probtype(probtype, pdparam):
     klval_ll_stderr = logliks.std() / np.sqrt(N) #pylint: disable=E1101
     assert np.abs(klval - klval_ll) < 3 * klval_ll_stderr # within 3 sigmas
     print('ok on', probtype, pdparam)
-
