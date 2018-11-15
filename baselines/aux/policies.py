@@ -48,7 +48,7 @@ class PolicyWithValue(object):
         self.pd, self.pi = self.pdtype.pdfromlatent(latent, init_scale=0.01, head=head)
 
         self.action = self.pd.sample()
-        self.action_v = tf.cast(tf.reshape(self.action, [self.action.shape[0], 1]), tf.float32)
+        #self.action_v = tf.cast(tf.reshape(self.action, [self.action.shape[0], 1]), tf.float32)
         self.neglogp = self.pd.neglogp(self.action)
         self.sess = sess
 
