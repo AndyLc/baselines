@@ -15,7 +15,7 @@ class Runner(AbstractEnvRunner):
         mb_states = self.states
         for n in range(self.nsteps):
             #(action, value estimate, next state, negative log likelihood of the action under current policy parameters) tuple
-            actions, values, states, _ = self.models.step(self.obs, S=self.states, M=self.dones)
+            actions, values, states, _ = self.model.step(self.obs, S=self.states, M=self.dones)
             #not really sure what M and S does here...
 
             #actions, values, and states are all obtained by running session of the tf graph.

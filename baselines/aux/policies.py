@@ -156,13 +156,16 @@ def build_policy(env, policy_network, head, value_network=None,  normalize_obser
 
         #ACTOR!!!
         with tf.variable_scope('pi' + str(head), reuse=tf.AUTO_REUSE):
-            policy_latent, recurrent_tensors = policy_network(features)
-            if recurrent_tensors is not None:
-                # recurrent architecture, need a few more steps
-                nenv = nbatch // nsteps
-                assert nenv > 0, 'Bad input for recurrent policy: batch size {} smaller than nsteps {}'.format(nbatch, nsteps)
-                policy_latent, recurrent_tensors = policy_network(features, nenv)
-                extra_tensors.update(recurrent_tensors)
+            policy_latent = policy_network(features)
+            if isinstance(policy_latent, tuple):
+                policy_latent, recurrent_tensors = policy_latent
+
+                if recurrent_tensors is not None:
+                    # recurrent architecture, need a few more steps
+                    nenv = nbatch // nsteps
+                    assert nenv > 0, 'Bad input for recurrent policy: batch size {} smaller than nsteps {}'.format(nbatch, nsteps)
+                    policy_latent, recurrent_tensors = policy_network(encoded_x, nenv)
+                    extra_tensors.update(recurrent_tensors)
 
         #CRITIC!!
         _v_net = value_network
