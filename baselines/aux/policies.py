@@ -117,46 +117,32 @@ class PolicyWithValue(object):
     def load(self, load_path):
         tf_util.load_state(load_path, sess=self.sess)
 
-def build_policy(env, policy_network, head, value_network=None,  normalize_observations=False, estimate_q=False, **policy_kwargs):
+def build_policy(env, policy_network, head, value_network=None,  normalize_observations=False, estimate_q=False, observ_placeholder=None, **policy_kwargs):
     if isinstance(policy_network, str):
         network_type = policy_network
         policy_network = get_network_builder(network_type)(**policy_kwargs)
         feature_network = get_network_builder(network_type)(**policy_kwargs)
 
-    def policy_fn(nbatch=None, nsteps=None, sess=None, observ_placeholder=None):
+    def policy_fn(nbatch=None, nsteps=None, sess=None, observ_placeholder=None, encoded_x=None):
         ob_space = env.observation_space
-
-        X = observ_placeholder if observ_placeholder is not None else observation_placeholder(ob_space, batch_size=nbatch)
-
         extra_tensors = {}
 
-        if normalize_observations and X.dtype == tf.float32:
-            encoded_x, rms = _normalize_clip_observation(X)
-            extra_tensors['rms'] = rms
+        if observ_placeholder is None:
+            X = observation_placeholder(ob_space, batch_size=nbatch)
+            if normalize_observations and X.dtype == tf.float32:
+                new_encoded_x, rms = _normalize_clip_observation(X)
+                extra_tensors['rms'] = rms
+            else:
+                new_encoded_x = X
+
+            new_encoded_x = encode_observation(ob_space, new_encoded_x)
+            new_encoded_x = get_network_builder("cnn")(**policy_kwargs)(new_encoded_x)
         else:
-            encoded_x = X
+            X = observ_placeholder
+            new_encoded_x = encoded_x
 
-        encoded_x = encode_observation(ob_space, encoded_x)
-
-        with tf.variable_scope('shared', reuse=tf.AUTO_REUSE):
-            features = fc(encoded_x, 'feat', 128)
-            #scope.reuse_variables()
-
-        """
-        with tf.variable_scope('shared', reuse=True):
-            features = fc(encoded_x, 'q'), env.action_space.n)
-            features, recurrent_tensors = feature_network(encoded_x)
-            if recurrent_tensors is not None:
-                # recurrent architecture, need a few more steps
-                nenv = nbatch // nsteps
-                assert nenv > 0, 'Bad input for recurrent policy: batch size {} smaller than nsteps {}'.format(nbatch, nsteps)
-                features, recurrent_tensors = feature_network(encoded_x, nenv)
-                extra_tensors.update(recurrent_tensors)
-        """
-
-        #ACTOR!!!
         with tf.variable_scope('pi' + str(head), reuse=tf.AUTO_REUSE):
-            policy_latent = policy_network(features)
+            policy_latent = policy_network(new_encoded_x)
             if isinstance(policy_latent, tuple):
                 policy_latent, recurrent_tensors = policy_latent
 
@@ -164,10 +150,9 @@ def build_policy(env, policy_network, head, value_network=None,  normalize_obser
                     # recurrent architecture, need a few more steps
                     nenv = nbatch // nsteps
                     assert nenv > 0, 'Bad input for recurrent policy: batch size {} smaller than nsteps {}'.format(nbatch, nsteps)
-                    policy_latent, recurrent_tensors = policy_network(encoded_x, nenv)
+                    policy_latent, recurrent_tensors = policy_network(new_encoded_x, nenv)
                     extra_tensors.update(recurrent_tensors)
 
-        #CRITIC!!
         _v_net = value_network
 
         if _v_net is None or _v_net == 'shared':
@@ -179,7 +164,7 @@ def build_policy(env, policy_network, head, value_network=None,  normalize_obser
                 assert callable(_v_net)
 
             with tf.variable_scope('vf' + str(head), reuse=tf.AUTO_REUSE):
-                vf_latent, _ = _v_net(encoded_x)
+                vf_latent, _ = _v_net(new_encoded_x)
 
         policy = PolicyWithValue(
             env=env,
@@ -194,7 +179,7 @@ def build_policy(env, policy_network, head, value_network=None,  normalize_obser
 
         #print(policy.vf)
 
-        return policy
+        return policy, X, new_encoded_x
 
     return policy_fn
 
